@@ -314,3 +314,4 @@ function formatDate(iso) {
 
 function signed(n) {
   return n > 0 ? `+${n}` : `${n}`;
+}
