@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Zap, Save, List, Trash2, Loader2, ArrowLeft } from "lucide-react";
+import { supabase } from "./supabaseClient";
 
 export default function StromTracker() {
   const [view, setView] = useState("form");
@@ -24,33 +25,17 @@ export default function StromTracker() {
     setLoading(true);
     setError("");
     try {
-      const result = await window.storage.get("stromverbrauch-eintraege", true);
-      if (result && result.value) {
-        const parsed = JSON.parse(result.value);
-        setEntries(parsed);
-      }
+      const { data, error: fetchError } = await supabase
+        .from("eintraege")
+        .select("*")
+        .order("id", { ascending: false });
+
+      if (fetchError) throw fetchError;
+      setEntries(data || []);
     } catch (e) {
-      // key not found is expected on first run
+      setError("Laden hat nicht geklappt: " + e.message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function saveEntries(next) {
-    setSaving(true);
-    setError("");
-    try {
-      const res = await window.storage.set(
-        "stromverbrauch-eintraege",
-        JSON.stringify(next),
-        true
-      );
-      if (!res) throw new Error("Speichern fehlgeschlagen");
-      setEntries(next);
-    } catch (e) {
-      setError("Speichern hat nicht geklappt. Bitte nochmal versuchen.");
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -58,7 +43,7 @@ export default function StromTracker() {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  function handleAdd(e) {
+  async function handleAdd(e) {
     e.preventDefault();
     if (!form.datum || !form.uhrzeit) {
       setError("Bitte Datum und Uhrzeit angeben.");
@@ -68,23 +53,50 @@ export default function StromTracker() {
       setError("Bitte mindestens einen Zählerstand eintragen.");
       return;
     }
-    const newEntry = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      ...form,
-    };
-    const next = [newEntry, ...entries];
-    saveEntries(next);
-    setForm({
-      datum: today,
-      uhrzeit: form.uhrzeit === "18:00" ? "09:00" : "18:00",
-      jason: "",
-      eltern: "",
-    });
+
+    setSaving(true);
+    setError("");
+    try {
+      const { data, error: insertError } = await supabase
+        .from("eintraege")
+        .insert([
+          {
+            datum: form.datum,
+            uhrzeit: form.uhrzeit,
+            jason: form.jason,
+            eltern: form.eltern,
+          },
+        ])
+        .select();
+
+      if (insertError) throw insertError;
+
+      setEntries((prev) => [data[0], ...prev]);
+      setForm({
+        datum: today,
+        uhrzeit: form.uhrzeit === "18:00" ? "09:00" : "18:00",
+        jason: "",
+        eltern: "",
+      });
+    } catch (e) {
+      setError("Speichern hat nicht geklappt: " + e.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleDelete(id) {
-    const next = entries.filter((en) => en.id !== id);
-    saveEntries(next);
+  async function handleDelete(id) {
+    try {
+      const { error: deleteError } = await supabase
+        .from("eintraege")
+        .delete()
+        .eq("id", id);
+
+      if (deleteError) throw deleteError;
+      setEntries((prev) => prev.filter((en) => en.id !== id));
+    } catch (e) {
+      setError("Löschen hat nicht geklappt: " + e.message);
+    }
   }
 
   const withConsumption = useMemo(() => {
@@ -243,6 +255,9 @@ export default function StromTracker() {
           </>
         ) : (
           <div>
+            {error && (
+              <p className="text-sm text-red-600 mb-4 font-semibold">{error}</p>
+            )}
             {loading ? (
               <div className="flex items-center justify-center py-12 text-gray-600">
                 <Loader2 className="w-6 h-6 animate-spin" />
@@ -299,4 +314,3 @@ function formatDate(iso) {
 
 function signed(n) {
   return n > 0 ? `+${n}` : `${n}`;
-}
